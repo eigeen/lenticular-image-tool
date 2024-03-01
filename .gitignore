@@ -1,0 +1,6 @@
+/target
+.env
+*.png
+*.jpg
+*.webp
+/input
