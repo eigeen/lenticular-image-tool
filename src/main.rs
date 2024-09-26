@@ -56,7 +56,7 @@ fn scan_inputs() -> Result<Vec<PathBuf>, Error> {
             // 文件名检查
             let file_name = file_path.file_stem().unwrap().to_str().unwrap();
             // 名字必须是数字
-            if file_name.chars().all(|c| c.is_digit(10)) {
+            if file_name.chars().all(|c| c.is_ascii_digit()) {
                 inputs.push(file_path);
             };
         }
@@ -72,7 +72,7 @@ fn load_images(inputs: &[PathBuf]) -> Result<Vec<DynamicImage>, Error> {
         .iter()
         .map(|input| image::open(input).context(ImageSnafu))
         .collect();
-    Ok(images?)
+    images
 }
 
 fn interact_process() -> Result<(), Error> {
@@ -93,7 +93,7 @@ fn interact_process() -> Result<(), Error> {
             });
         }
     };
-    if inputs.len() == 0 {
+    if inputs.is_empty() {
         error!("未找到有效的文件；文件名必须为纯数字，例如`0001.jpg`，`2.png`等；输入文件不能为空");
         // 借用Input来阻止窗口关闭
         let _: String = Input::with_theme(&ColorfulTheme::default())
@@ -172,7 +172,7 @@ fn interact_process() -> Result<(), Error> {
         min_width
     };
     let lenticular_pixel_thick = (min_length as f64 / lenticular_count as f64).ceil() as u32; // 理论光栅线像素宽度
-    // 反推图片最佳分辨率
+                                                                                              // 反推图片最佳分辨率
     let (min_width, min_height) = if input_direction == "h" {
         let new_height = lenticular_pixel_thick * lenticular_count;
         let new_width = (min_width as f64 * (new_height as f64 / min_height as f64)).ceil() as u32;
@@ -220,7 +220,7 @@ fn interact_process() -> Result<(), Error> {
                 (start_x..start_x + w).for_each(|x| {
                     (start_y..start_y + h).for_each(|y| {
                         if x < min_width && y < min_height {
-                            let _ = canvas.put_pixel(x, y, std_img.get_pixel(x, y));
+                            canvas.put_pixel(x, y, std_img.get_pixel(x, y));
                         }
                     })
                 });

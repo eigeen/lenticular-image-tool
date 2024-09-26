@@ -6,9 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-dialoguer = { version = "0.11.0", features = ["completion"] }
-dotenvy = "0.15.7"
-env_logger = "0.11.2"
-image = "0.24.9"
-log = { version = "0.4.21", features = ["serde"] }
-snafu = "0.8.1"
+dialoguer = { version = "0.11", features = ["completion"] }
+dotenvy = "0.15"
+env_logger = "0.11"
+image = "0.25"
+log = { version = "0.4", features = ["serde"] }
+snafu = "0.8"
