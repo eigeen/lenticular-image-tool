@@ -3,29 +3,15 @@ use env_logger::{Builder, Env};
 use image::{imageops::FilterType, DynamicImage, GenericImageView, Rgba};
 use log::{debug, error, info, warn};
 use std::{
-    fmt, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
-use snafu::prelude::*;
+mod error;
 
-#[derive(Snafu)]
-enum Error {
-    #[snafu(display("I/O error: {source}"))]
-    IO { source: std::io::Error },
-    #[snafu(display("Image error: {source}"))]
-    Image { source: image::ImageError },
-    #[snafu(display("{reason}"))]
-    Input { reason: String },
-}
+use error::{Error, Result};
 
-impl fmt::Debug for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
-fn main() -> Result<(), Error> {
+fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let result = interact_process();
     // 借用Input来阻止窗口关闭
@@ -37,7 +23,7 @@ fn main() -> Result<(), Error> {
     result
 }
 
-fn scan_inputs() -> Result<Vec<PathBuf>, Error> {
+fn scan_inputs() -> Result<Vec<PathBuf>> {
     let path = Path::new("input");
     info!("输入目录：{}", path.display());
     let mut inputs: Vec<PathBuf> = Vec::new();
@@ -50,7 +36,7 @@ fn scan_inputs() -> Result<Vec<PathBuf>, Error> {
         }
     };
     for entry in entries {
-        let entry = entry.context(IOSnafu)?;
+        let entry = entry?;
         let file_path = entry.path();
         if file_path.is_file() {
             // 文件名检查
@@ -67,15 +53,15 @@ fn scan_inputs() -> Result<Vec<PathBuf>, Error> {
     Ok(inputs)
 }
 
-fn load_images(inputs: &[PathBuf]) -> Result<Vec<DynamicImage>, Error> {
-    let images: Result<Vec<_>, _> = inputs
+fn load_images(inputs: &[PathBuf]) -> Result<Vec<DynamicImage>> {
+    let images: Result<Vec<_>> = inputs
         .iter()
-        .map(|input| image::open(input).context(ImageSnafu))
+        .map(|input| image::open(input).map_err(Error::Image))
         .collect();
     images
 }
 
-fn interact_process() -> Result<(), Error> {
+fn interact_process() -> Result<()> {
     Builder::from_env(Env::default().default_filter_or("info")).init();
 
     let inputs = match scan_inputs() {
@@ -133,10 +119,12 @@ fn interact_process() -> Result<(), Error> {
     // 策略：丢弃多余的光栅，实际影响几乎没有
     let input_lpi = Input::with_theme(&ColorfulTheme::default())
         .with_prompt("输入目标图片的光栅LPI（光栅密度，每英寸光栅线数量）")
-        .validate_with(|input: &String| -> Result<(), &str> {
+        .validate_with(|input: &String| -> Result<()> {
             match input.parse::<f64>() {
                 Ok(_) => Ok(()),
-                Err(_) => Err("请输入一个有效数字"),
+                Err(_) => Err(Error::Input {
+                    reason: "请输入一个有效数字".to_string(),
+                }),
             }
         })
         .interact_text()
@@ -154,10 +142,12 @@ fn interact_process() -> Result<(), Error> {
     };
     let input_phy_height = Input::with_theme(&ColorfulTheme::default())
         .with_prompt(phy_height_prompt)
-        .validate_with(|input: &String| -> Result<(), &str> {
+        .validate_with(|input: &String| -> Result<()> {
             match input.parse::<f64>() {
                 Ok(_) => Ok(()),
-                Err(_) => Err("请输入一个有效数字"),
+                Err(_) => Err(Error::Input {
+                    reason: "请输入一个有效数字".to_string(),
+                }),
             }
         })
         .interact_text()
@@ -171,8 +161,9 @@ fn interact_process() -> Result<(), Error> {
     } else {
         min_width
     };
-    let lenticular_pixel_thick = (min_length as f64 / lenticular_count as f64).ceil() as u32; // 理论光栅线像素宽度
-                                                                                              // 反推图片最佳分辨率
+    // 理论光栅线像素宽度
+    let lenticular_pixel_thick = (min_length as f64 / lenticular_count as f64).ceil() as u32;
+    // 反推图片最佳分辨率
     let (min_width, min_height) = if input_direction == "h" {
         let new_height = lenticular_pixel_thick * lenticular_count;
         let new_width = (min_width as f64 * (new_height as f64 / min_height as f64)).ceil() as u32;
@@ -227,7 +218,7 @@ fn interact_process() -> Result<(), Error> {
             })
     });
 
-    canvas.save("output.png").context(ImageSnafu)?;
+    canvas.save("output.png")?;
 
     Ok(())
 }

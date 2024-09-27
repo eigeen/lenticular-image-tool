@@ -1,6 +1,8 @@
 /target
+/.vscode
+
+/input
 .env
 *.png
 *.jpg
 *.webp
-/input
