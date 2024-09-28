@@ -11,3 +11,13 @@ members = ["bin/cli", "crates/core"]
     env_logger = "0.11"
     # image
     image = "0.25"
+    tiff = "0.9"
+
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.tiff]
+opt-level = 3
+
+[profile.dev.package.ndarray]
+opt-level = 3

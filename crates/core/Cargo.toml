@@ -1,6 +1,15 @@
 [package]
 name = "core"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 [dependencies]
+thiserror = { workspace = true }
+log = { workspace = true }
+tiff = { workspace = true }
+# image = { workspace = true }
+ndarray = { version = "0.16.1", features = ["rayon"] }
+fast_image_resize = { version = "3" }
+
+[dev-dependencies]
+env_logger = "0.11"

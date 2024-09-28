@@ -3,9 +3,6 @@ name = "lenticular-image-tool"
 version = "0.1.1"
 edition = "2021"
 
-[profile.dev.package.image]
-opt-level = 3
-
 [dependencies]
 anyhow = { workspace = true }
 thiserror = { workspace = true }

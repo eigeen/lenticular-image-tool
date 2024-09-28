@@ -14,12 +14,7 @@ use error::{Error, Result};
 fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let result = interact_process();
-    // 借用Input来阻止窗口关闭
-    let _: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("按Enter键关闭")
-        .allow_empty(true)
-        .interact()
-        .unwrap();
+    press_enter_to_continue("按Enter键关闭");
     result
 }
 
@@ -68,25 +63,15 @@ fn interact_process() -> Result<()> {
         Ok(inputs) => inputs,
         Err(e) => {
             error!("需要在程序同级目录下建立目录`input`存放输入文件");
-            // 借用Input来阻止窗口关闭
-            let _: String = Input::with_theme(&ColorfulTheme::default())
-                .with_prompt("按Enter键关闭")
-                .allow_empty(true)
-                .interact()
-                .unwrap();
+            press_enter_to_continue("按Enter键关闭");
             return Err(Error::Input {
                 reason: e.to_string(),
             });
         }
     };
     if inputs.is_empty() {
-        error!("未找到有效的文件；文件名必须为纯数字，例如`0001.jpg`，`2.png`等；输入文件不能为空");
-        // 借用Input来阻止窗口关闭
-        let _: String = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("按Enter键关闭")
-            .allow_empty(true)
-            .interact()
-            .unwrap();
+        error!("未找到有效的文件；文件名必须为纯数字，例如 0001.jpg, 2.png 等; 输入文件不能为空");
+        press_enter_to_continue("按Enter键关闭");
         return Err(Error::Input {
             reason: "输入文件不能为空".to_string(),
         });
@@ -221,6 +206,15 @@ fn interact_process() -> Result<()> {
     canvas.save("output.png")?;
 
     Ok(())
+}
+
+/// 借用Input来阻止窗口关闭
+fn press_enter_to_continue(prompt: &str) {
+    let _: String = Input::with_theme(&ColorfulTheme::default())
+        .with_prompt(prompt)
+        .allow_empty(true)
+        .interact()
+        .unwrap();
 }
 
 struct DirectionCompletion {
