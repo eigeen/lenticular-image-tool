@@ -1,6 +1,6 @@
 use std::num::NonZero;
 
-use fast_image_resize::{FilterType, Image, PixelType, ResizeAlg, Resizer};
+use fast_image_resize::{Image, PixelType, ResizeAlg, Resizer};
 
 use crate::error::{Error, Result};
 
@@ -10,6 +10,7 @@ pub fn resize_cmyk8(
     height: u32,
     out_width: u32,
     out_height: u32,
+    alg: ResizeAlg,
 ) -> Result<Vec<u8>> {
     let input_height =
         NonZero::new(height).ok_or(Error::InvalidInput("height cannot be zero".to_string()))?;
@@ -25,7 +26,7 @@ pub fn resize_cmyk8(
     let mut dst_image = Image::new(output_width, output_height, PixelType::U8x4);
     let mut dst_view = dst_image.view_mut();
 
-    let mut resizer = Resizer::new(ResizeAlg::Convolution(FilterType::Lanczos3));
+    let mut resizer = Resizer::new(alg);
     resizer.resize(&src_image.view(), &mut dst_view)?;
 
     Ok(dst_image.buffer().to_vec())

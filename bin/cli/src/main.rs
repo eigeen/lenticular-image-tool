@@ -1,247 +1,213 @@
-use dialoguer::{theme::ColorfulTheme, Completion, Input};
-use env_logger::{Builder, Env};
-use image::{imageops::FilterType, DynamicImage, GenericImageView, Rgba};
-use log::{debug, error, info, warn};
 use std::{
-    fs,
-    path::{Path, PathBuf},
+    fs::{File, OpenOptions},
+    io::BufReader,
 };
 
-mod error;
+use anyhow::Context;
+use clap::{Parser, ValueEnum};
+use lenticular_core::lenticular::{self, ImageOptions, InputImageContext, ProcessOptions};
+use log::{debug, info};
 
-use error::{Error, Result};
+#[derive(Debug, Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    // 输入参数
+    /// 输入文件，可以为多个。若输入多个文件，请保证文件数量与后续多个参数数量一致。
+    #[clap(short, long)]
+    input: Vec<String>,
+    /// 为每个文件指定目标光栅宽度。
+    ///
+    /// 若输入多个文件，则每个文件对应一个光栅宽度。
+    /// 若该参数只设置一个，则所有文件都使用该值。
+    #[clap(short, long)]
+    lenticular_width: Vec<u32>,
+    /// 不自动分配光栅像素宽度。
+    ///
+    /// 若指定此参数，则将采用输入值作为光栅像素宽度绝对值。
+    /// 这可以精确分配光栅像素宽度，但可能导致输出图像过小或过大。
+    #[clap(long)]
+    no_auto_assign_width: bool,
 
-fn main() -> Result<()> {
-    dotenvy::dotenv().ok();
-    let result = interact_process();
-    press_enter_to_continue("按Enter键关闭");
-    result
+    // 调整
+    /// 缩放算法
+    #[clap(long)]
+    scale_algorithm: Option<ScaleAlgorithm>,
+
+    // 输出参数
+    /// 光栅线宽，单位：光栅数/英寸(LPI)
+    #[clap(long)]
+    lpi: f64,
+    /// 输出图像宽度，单位：毫米(mm)
+    #[clap(long)]
+    output_width: f64,
+    // /// 对输出图像进行缩放，使得分辨率与输入图像一致
+    // #[clap(long)]
+    // resize_output: bool,
+    /// 输出文件
+    #[clap(short, long)]
+    output: String,
+
+    /// 启用调试输出
+    #[clap(long)]
+    debug: bool,
 }
 
-fn scan_inputs() -> Result<Vec<PathBuf>> {
-    let path = Path::new("input");
-    info!("输入目录：{}", path.display());
-    let mut inputs: Vec<PathBuf> = Vec::new();
-    let entries = match fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(_) => {
-            return Err(Error::Input {
-                reason: format!("输入目录`{}`不存在或无法读取", path.display()),
-            })
-        }
-    };
-    for entry in entries {
-        let entry = entry?;
-        let file_path = entry.path();
-        if file_path.is_file() {
-            // 文件名检查
-            let file_name = file_path.file_stem().unwrap().to_str().unwrap();
-            // 名字必须是数字
-            if file_name.chars().all(|c| c.is_ascii_digit()) {
-                inputs.push(file_path);
-            };
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+enum ScaleAlgorithm {
+    Nearest,
+    #[default]
+    Bilinear,
+    Lanczos3,
+}
+
+impl From<ScaleAlgorithm> for lenticular::ScaleAlgorithm {
+    fn from(val: ScaleAlgorithm) -> Self {
+        match val {
+            ScaleAlgorithm::Nearest => lenticular::ScaleAlgorithm::Nearest,
+            ScaleAlgorithm::Bilinear => lenticular::ScaleAlgorithm::Bilinear,
+            ScaleAlgorithm::Lanczos3 => lenticular::ScaleAlgorithm::Lanczos3,
         }
     }
-    // 文件名排序
-    inputs.sort_by(|a, b| a.file_name().unwrap().cmp(b.file_name().unwrap()));
-
-    Ok(inputs)
 }
 
-fn load_images(inputs: &[PathBuf]) -> Result<Vec<DynamicImage>> {
-    let images: Result<Vec<_>> = inputs
+fn main() -> anyhow::Result<()> {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .init();
+
+    let mut cli = Cli::parse();
+
+    if cli.debug {
+        log::set_max_level(log::LevelFilter::Debug);
+    } else {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+
+    if cli.input.is_empty() {
+        return Err(anyhow::anyhow!("输入文件为空"));
+    }
+    if cli.lenticular_width.len() > 1 && cli.input.len() != cli.lenticular_width.len() {
+        return Err(anyhow::anyhow!(
+            "输入文件数量与 --lenticular-width 的参数数量不一致"
+        ));
+    }
+    if cli.lenticular_width.iter().any(|&w| w == 0) {
+        return Err(anyhow::anyhow!("光栅像素宽度必须大于0"));
+    }
+    if cli.lenticular_width.len() == 1 && cli.input.len() > 1 {
+        // 若只有一个光栅宽度，则所有文件都使用该值
+        cli.lenticular_width = vec![cli.lenticular_width[0]; cli.input.len()];
+    }
+    if cli.lpi <= 0.0 {
+        return Err(anyhow::anyhow!("LPI必须大于0"));
+    }
+    if cli.output_width <= 0.0 {
+        return Err(anyhow::anyhow!("输出图像宽度必须大于0"));
+    }
+
+    // 核心功能
+    info!("参数输入：");
+    info!("输入文件：{:?}", cli.input);
+    info!("光栅宽度：{:?}", cli.lenticular_width);
+    info!("自动分配光栅宽度：{:?}", !cli.no_auto_assign_width);
+    info!("LPI：{:?}", cli.lpi);
+    info!("输出图像宽度：{:?}", cli.output_width);
+    // info!("缩放输出：{:?}", cli.resize_output);
+    info!("输出文件：{:?}", cli.output);
+    info!("缩放算法：{:?}", cli.scale_algorithm.unwrap_or_default());
+
+    let inputs: anyhow::Result<Vec<InputImageContext<BufReader<File>>>> = cli
+        .input
         .iter()
-        .map(|input| image::open(input).map_err(Error::Image))
+        .zip(cli.lenticular_width.iter())
+        .map(|(input, lenticular_width)| {
+            let file = File::open(input).context(format!("打开文件 {} 失败", input))?;
+            let reader = BufReader::new(file);
+            Ok(InputImageContext::new(
+                reader,
+                ImageOptions {
+                    lenticular_width_px: *lenticular_width,
+                },
+            ))
+        })
         .collect();
-    images
-}
+    let mut inputs = inputs?;
 
-fn interact_process() -> Result<()> {
-    Builder::from_env(Env::default().default_filter_or("info")).init();
+    info!("");
+    info!("开始计算输出...");
 
-    let inputs = match scan_inputs() {
-        Ok(inputs) => inputs,
-        Err(e) => {
-            error!("需要在程序同级目录下建立目录`input`存放输入文件");
-            press_enter_to_continue("按Enter键关闭");
-            return Err(Error::Input {
-                reason: e.to_string(),
-            });
-        }
-    };
-    if inputs.is_empty() {
-        error!("未找到有效的文件；文件名必须为纯数字，例如 0001.jpg, 2.png 等; 输入文件不能为空");
-        press_enter_to_continue("按Enter键关闭");
-        return Err(Error::Input {
-            reason: "输入文件不能为空".to_string(),
-        });
-    }
-    info!(
-        "输入文件：{}",
-        inputs
+    let start = std::time::Instant::now();
+
+    // 测试最佳光栅宽度
+    let opt = ProcessOptions::new(cli.lpi, cli.output_width)
+        .with_scale_algorithm(cli.scale_algorithm.unwrap_or_default().into());
+    let mut output_info = opt.calc_output_info(&mut inputs)?;
+    // 自动模式，自动计算最优光栅宽度
+    if !cli.no_auto_assign_width && output_info.height < output_info.source_params.height {
+        // 输出太小，尝试重新计算
+        // 计算最简光栅宽度
+        let gcd = cli
+            .lenticular_width
             .iter()
-            .map(|i| i.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-
-    let images = load_images(&inputs)?;
-    let (min_width, min_height) =
-        images
+            .cloned()
+            .reduce(num::integer::gcd)
+            .unwrap_or(1);
+        let delta = cli
+            .lenticular_width
             .iter()
-            .fold((u32::MAX, u32::MAX), |(min_w, min_h), img| {
-                let (w, h) = img.dimensions();
-                (min_w.min(w), min_h.min(h))
-            });
-    let aspect_ratio = min_height as f32 / min_width as f32;
-
-    warn!(
-        "目标图片采用所有输入源的最小宽高：{min_width} * {min_height}，宽高比 = 1:{aspect_ratio}"
-    );
-    warn!("若输入源比例不同，会自动缩放后居中裁切。比例相同，会自动缩放。");
-    warn!("如果需要精确控制，请提前自行裁切所有输入源到相同比例");
-
-    // 策略：丢弃多余的光栅，实际影响几乎没有
-    let input_lpi = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("输入目标图片的光栅LPI（光栅密度，每英寸光栅线数量）")
-        .validate_with(|input: &String| -> Result<()> {
-            match input.parse::<f64>() {
-                Ok(_) => Ok(()),
-                Err(_) => Err(Error::Input {
-                    reason: "请输入一个有效数字".to_string(),
-                }),
+            .map(|w| w / gcd)
+            .collect::<Vec<u32>>();
+        let mut best_lenticular_width = cli.lenticular_width.clone();
+        loop {
+            // 应用到输入
+            inputs
+                .iter_mut()
+                .zip(best_lenticular_width.iter())
+                .for_each(|(input, w)| input.image_options_mut().lenticular_width_px = *w);
+            // 计算输出
+            output_info = opt.calc_output_info(&mut inputs)?;
+            debug!("trying new output_info: {:?}", output_info);
+            if output_info.height >= output_info.source_params.height {
+                break;
             }
-        })
-        .interact_text()
-        .unwrap();
-    let direction_completion = DirectionCompletion::default();
-    let input_direction: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("输入目标图片的光栅方向（横向(h)orizontal/纵向(v)erticle）")
-        .completion_with(&direction_completion)
-        .interact_text()
-        .unwrap();
-    let phy_height_prompt = if input_direction == "v" {
-        "输入目标图片的物理宽度（单位：厘米）"
-    } else {
-        "输入目标图片的物理高度（单位：厘米）"
-    };
-    let input_phy_height = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt(phy_height_prompt)
-        .validate_with(|input: &String| -> Result<()> {
-            match input.parse::<f64>() {
-                Ok(_) => Ok(()),
-                Err(_) => Err(Error::Input {
-                    reason: "请输入一个有效数字".to_string(),
-                }),
-            }
-        })
-        .interact_text()
-        .unwrap();
-
-    let lpi: f64 = input_lpi.parse().unwrap();
-    let phy_len: f64 = input_phy_height.parse::<f64>().unwrap() * 0.3937; // 换算英寸
-    let lenticular_count = (phy_len * lpi).ceil() as u32; // 理论需要的光栅线数量
-    let min_length = if input_direction == "h" {
-        min_height
-    } else {
-        min_width
-    };
-    // 理论光栅线像素宽度
-    let lenticular_pixel_thick = (min_length as f64 / lenticular_count as f64).ceil() as u32;
-    // 反推图片最佳分辨率
-    let (min_width, min_height) = if input_direction == "h" {
-        let new_height = lenticular_pixel_thick * lenticular_count;
-        let new_width = (min_width as f64 * (new_height as f64 / min_height as f64)).ceil() as u32;
-        (new_width, new_height)
-    } else {
-        let new_width = lenticular_pixel_thick * lenticular_count;
-        let new_height = (min_height as f64 * (new_width as f64 / min_width as f64)).ceil() as u32;
-        (new_width, new_height)
-    };
-
-    info!("输出图片光栅数量（向上取整）：{lenticular_count}");
-    info!("输出图片光栅像素宽度（向上取整）：{lenticular_pixel_thick}px");
-    warn!("为了保证准确光栅尺寸，原图宽(高)将被就近缩放到：{min_width} * {min_height}");
-
-    let mut canvas = image::ImageBuffer::<Rgba<u8>, Vec<u8>>::new(min_width, min_height);
-    images.iter().enumerate().for_each(|(img_index, img)| {
-        let std_img = if img.width() != min_width || img.height() != min_height {
-            img.resize_to_fill(min_width, min_height, FilterType::Lanczos3)
-        } else {
-            img.clone()
-        };
-
-        (0..lenticular_count)
-            .skip(img_index)
-            .step_by(images.len())
-            .for_each(|lenticular_index| {
-                let (start_x, start_y, w, h) = if input_direction == "h" {
-                    // 横向
-                    let start_x = 0;
-                    let start_y = lenticular_index * lenticular_pixel_thick;
-                    let w = min_width;
-                    let h = lenticular_pixel_thick;
-                    (start_x, start_y, w, h)
-                } else {
-                    // 纵向
-                    let start_x = lenticular_index * lenticular_pixel_thick;
-                    let start_y = 0;
-                    let w = lenticular_pixel_thick;
-                    let h = min_height;
-                    (start_x, start_y, w, h)
-                };
-
-                debug!("block: image = {img_index}, lenticular = {lenticular_index}, x = {start_x}-{}, y = {start_y}-{}", start_x + w, start_y + h);
-                // 遍历该矩形区域并复制像素
-                (start_x..start_x + w).for_each(|x| {
-                    (start_y..start_y + h).for_each(|y| {
-                        if x < min_width && y < min_height {
-                            canvas.put_pixel(x, y, std_img.get_pixel(x, y));
-                        }
-                    })
+            // 尝试更大的光栅宽度
+            best_lenticular_width
+                .iter_mut()
+                .zip(delta.iter())
+                .for_each(|(w, b)| {
+                    *w += b;
                 });
-            })
-    });
+        }
 
-    canvas.save("output.png")?;
+        info!("自动光栅宽度(px)：{:?}", best_lenticular_width);
+        inputs
+            .iter_mut()
+            .zip(best_lenticular_width.iter())
+            .for_each(|(input, w)| {
+                input.image_options_mut().lenticular_width_px = *w;
+            });
+    }
+
+    debug!(
+        "inputs: {:?}",
+        inputs.iter().map(|i| i.image_options()).collect::<Vec<_>>()
+    );
+
+    let out = opt.process_tiff_cmyk8(
+        inputs,
+        &output_info,
+        cli.scale_algorithm.unwrap_or_default().into(),
+    )?;
+
+    let output_file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&cli.output)?;
+    lenticular::write_tiff_cmyk8(output_file, &out)?;
+
+    let elapsed = start.elapsed().as_millis();
+    info!("处理完成，耗时 {} 毫秒", elapsed);
 
     Ok(())
-}
-
-/// 借用Input来阻止窗口关闭
-fn press_enter_to_continue(prompt: &str) {
-    let _: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt(prompt)
-        .allow_empty(true)
-        .interact()
-        .unwrap();
-}
-
-struct DirectionCompletion {
-    options: Vec<String>,
-}
-
-impl Default for DirectionCompletion {
-    fn default() -> Self {
-        DirectionCompletion {
-            options: vec!["h".to_string(), "v".to_string()],
-        }
-    }
-}
-
-impl Completion for DirectionCompletion {
-    /// Simple completion implementation based on substring
-    fn get(&self, input: &str) -> Option<String> {
-        let matches = self
-            .options
-            .iter()
-            .filter(|option| option.starts_with(input))
-            .collect::<Vec<_>>();
-
-        if matches.len() == 1 {
-            Some(matches[0].to_string())
-        } else {
-            None
-        }
-    }
 }

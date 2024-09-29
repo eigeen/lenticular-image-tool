@@ -34,15 +34,21 @@ impl Color for Cmyk8Color {
 }
 
 #[derive(Debug, Clone)]
-pub struct MatrixImageInfo {
+pub struct DpiInfo {
     pub dpi_h: f64,
     pub dpi_w: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageInfo {
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Clone)]
 pub struct MatrixImage<C> {
     mat: Array2<C>,
-    info: Option<MatrixImageInfo>,
+    info: Option<DpiInfo>,
 }
 
 impl<C> MatrixImage<C>
@@ -90,20 +96,41 @@ where
         self.mat.shape()[1] as u32
     }
 
-    pub fn set_info(&mut self, info: MatrixImageInfo) {
+    pub fn set_info(&mut self, info: DpiInfo) {
         self.info = Some(info)
     }
 
-    pub fn info(&self) -> Option<&MatrixImageInfo> {
+    pub fn info(&self) -> Option<&DpiInfo> {
         self.info.as_ref()
     }
 }
 
 impl MatrixImage<Cmyk8Color> {
-    pub fn into_bytes(self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         self.mat
             .iter()
             .flat_map(|c| [c.c, c.m, c.y, c.k])
             .collect::<Vec<u8>>()
+    }
+}
+
+pub struct TypedRawImage<C> {
+    data: Vec<u8>,
+    info: ImageInfo,
+    dpi_info: DpiInfo,
+    _color_marker: std::marker::PhantomData<C>,
+}
+
+impl<C> TypedRawImage<C>
+where
+    C: Color,
+{
+    pub fn new(data: Vec<u8>, width: u32, height: u32, dpi_h: f64, dpi_w: f64) -> Self {
+        TypedRawImage {
+            data,
+            info: ImageInfo { width, height },
+            dpi_info: DpiInfo { dpi_h, dpi_w },
+            _color_marker: std::marker::PhantomData,
+        }
     }
 }
