@@ -489,6 +489,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "testing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "fast_image_resize",
+ "log",
+ "ndarray",
+ "thiserror",
+ "tiff",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"

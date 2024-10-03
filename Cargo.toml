@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bin/cli", "crates/core"]
+members = ["bin/cli", "bin/testing", "crates/core"]
 
     [workspace.dependencies]
     # error handling

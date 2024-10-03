@@ -1,6 +1,5 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use fast_image_resize::{FilterType, ResizeAlg};
 use log::{debug, warn};
 use ndarray::Axis;
 use tiff::{
@@ -146,30 +145,26 @@ where
     drop(decoder);
     first_input.reader.seek(SeekFrom::Start(0))?;
 
-    // 各种参数
-    let lenticular_width_table = inputs
+    // 有效输入像素宽度
+    let lenticular_width_px: u32 = inputs
         .iter()
-        .map(|c| c.image_options.lenticular_width_px as usize)
-        .collect::<Vec<_>>();
-    let max_lenticular_width_px = *lenticular_width_table.iter().max().unwrap() as u32;
-    let total_lenticular_width_px = lenticular_width_table.iter().sum::<usize>() as u32;
-    // 计算缩放目标
-    // 以最宽光栅线的图像为基准，其他小于该宽度的图像后续进行横向缩放
-    let dpi = params.lpi * max_lenticular_width_px as f64;
-    let dpi_w = dpi * (total_lenticular_width_px as f64 / max_lenticular_width_px as f64);
-    debug!("DPI_OUT: {:.2}", dpi);
-    // 计算缩放目标分辨率
-    let f_scale = dpi * params.physical_width_in() / params.source_params.width as f64;
-    let f_scale_extra_w = total_lenticular_width_px as f64 / max_lenticular_width_px as f64;
-
-    let output_width_px: u32 =
-        (params.source_params.width as f64 * f_scale * f_scale_extra_w) as u32;
-    let output_height_px = (params.source_params.height as f64 * f_scale) as u32;
+        .map(|c| c.image_options().lenticular_width_px)
+        .sum();
+    // 光栅线数
+    let lenticular_count = (params.physical_width_in() * params.lpi).floor() as u32;
+    // 原图宽高比
+    let ratio = params.source_params.width as f64 / params.source_params.height as f64;
+    // 输出图像宽度
+    let output_width_px = lenticular_width_px * lenticular_count;
+    // 输出图像高度
+    let output_height_px = (output_width_px as f64 / ratio).floor() as u32;
+    // 输出图像DPI
+    let dpi = output_width_px as f64 / params.physical_width_in();
 
     Ok(OutputInfo {
         width: output_width_px,
         height: output_height_px,
-        dpi_w,
+        dpi_w: dpi,
         dpi_h: dpi,
         source_params: params.source_params,
     })
@@ -191,9 +186,8 @@ where
     // 各种参数
     let lenticular_width_table = inputs
         .iter()
-        .map(|c| c.image_options.lenticular_width_px as usize)
+        .map(|c| c.image_options.lenticular_width_px)
         .collect::<Vec<_>>();
-    let total_lenticular_width_px = lenticular_width_table.iter().sum::<usize>() as u32;
 
     // 创建输出图像
     let mut output_img: MatrixImage<Cmyk8Color> =
@@ -209,7 +203,6 @@ where
         .enumerate()
         .try_for_each(|(input_index, input_ctx)| -> Result<()> {
             let mut decoder = tiff::decoder::Decoder::new(&mut input_ctx.reader)?;
-            let img_options = &input_ctx.image_options;
             let img_params = read_params_from_tiff(&mut decoder, false)?;
             debug!("Image {:02} source: params: {:?}", input_index, img_params);
             if !is_matching_params(&output_info.source_params, &img_params) {
@@ -219,62 +212,51 @@ where
                 )));
             }
 
-            let width_ratio =
-                img_options.lenticular_width_px as f64 / total_lenticular_width_px as f64;
-            let target_width_px = (width_ratio * output_info.width as f64).floor() as u32;
-            let target_height_px = output_info.height;
-            debug!(
-                "width_ratio: {:.2}, target_width_px: {}, target_height_px: {}",
-                width_ratio, target_width_px, target_height_px
-            );
-
-            debug!(
-                "Image {:02} resized: {}x{}",
-                input_index, target_width_px, target_height_px
-            );
-
             // 读取图像数据
             let TiffDecodingResult::U8(img_res) = decoder.read_image()? else {
                 return Err(Error::InvalidInput(
                     "图像数据读取失败: 非预期的编码类型，仅接受 CMYK 8位图像".to_string(),
                 ));
             };
-            // 对宽度进行缩放
+            // 对原图进行缩放
             let resized_res = resize_cmyk8(
                 img_res,
                 img_params.width,
                 img_params.height,
-                target_width_px,
-                target_height_px,
+                output_info.width,
+                output_info.height,
                 scale_alg.into(),
             )?;
+            debug!(
+                "Image {:02} resized: {}x{}",
+                input_index, output_info.width, output_info.height
+            );
             // 创建矩阵图像封装
             let input_img: MatrixImage<Cmyk8Color> =
-                MatrixImage::from_slice(&resized_res, target_width_px, output_info.height)?;
-            let input_mat = input_img.inner();
+                MatrixImage::from_slice(&resized_res, output_info.width, output_info.height)?;
+
             // 写入输出图像
-            let output_width = output_img.width() as usize;
+            let input_mat = input_img.inner();
             let output_mat = output_img.inner_mut();
             let col_mapping = create_line_index_mapping_advanced(
-                input_img.width() as usize,
+                input_img.width(),
                 &lenticular_width_table,
                 input_index,
             );
-            (0..input_img.width() as usize).for_each(|col_index| {
-                let target_index = col_mapping[col_index];
-                if target_index >= output_width {
+            for col_index in col_mapping {
+                if col_index >= input_img.width() {
                     debug!(
                         "Image {:02}: skipping out of range column {}",
-                        input_index, target_index
+                        input_index, col_index
                     );
-                    return;
+                    break;
                 }
 
-                let input_column = input_mat.column(col_index);
+                let input_column = input_mat.column(col_index as usize);
                 output_mat
-                    .index_axis_mut(Axis(1), target_index)
+                    .index_axis_mut(Axis(1), col_index as usize)
                     .assign(&input_column);
-            });
+            }
 
             Ok(())
         })?;
@@ -288,70 +270,16 @@ where
     Ok(output_img)
 }
 
-/// 基于DPI还原分辨率
-pub fn restore_resolution_cmyk8(
-    image: &MatrixImage<Cmyk8Color>,
-) -> Result<MatrixImage<Cmyk8Color>> {
-    let Some(info) = image.info() else {
-        return Err(Error::InvalidInput(
-            "图像信息缺失，无法进行分辨率还原".to_string(),
-        ));
-    };
-    if info.dpi_h == info.dpi_w {
-        return Ok(image.clone());
-    }
-    // 计算缩放因子
-    let scale_factor = info.dpi_h / info.dpi_w;
-    let (target_width_px, target_height_px, dpi) = {
-        if scale_factor > 1.0 {
-            // 宽度缩放
-            let target_width_px = (image.width() as f64 * scale_factor).floor() as u32;
-            let target_height_px = image.height();
-            (target_width_px, target_height_px, info.dpi_h)
-        } else {
-            // 高度缩放
-            let target_height_px = (image.height() as f64 / scale_factor).floor() as u32;
-            let target_width_px = image.width();
-            (target_width_px, target_height_px, info.dpi_w)
-        }
-    };
-    debug!(
-        "Restore resolution: source DPI: {:.2}x{:.2}. target px: {:.2}x{:.2}",
-        info.dpi_w, info.dpi_h, target_width_px, target_height_px
-    );
-
-    let img_res = image.to_bytes();
-    let resized_res = resize_cmyk8(
-        img_res,
-        image.width(),
-        image.height(),
-        target_width_px,
-        target_height_px,
-        ResizeAlg::Convolution(FilterType::Bilinear),
-    )?;
-
-    let mut out = MatrixImage::from_slice(&resized_res, target_width_px, target_height_px)?;
-    out.set_info(DpiInfo {
-        dpi_h: dpi,
-        dpi_w: dpi,
-    });
-
-    Ok(out)
-}
-
 pub fn write_tiff_cmyk8<W>(writer: W, out: &MatrixImage<Cmyk8Color>) -> Result<()>
 where
     W: Write + Seek,
 {
     let mut out_encoder = tiff::encoder::TiffEncoder::new(writer)?;
 
-    // 还原分辨率
-    let out_restored = restore_resolution_cmyk8(out)?;
-    let mut out_tiff_img =
-        out_encoder.new_image::<colortype::CMYK8>(out_restored.width(), out_restored.height())?;
+    let mut out_tiff_img = out_encoder.new_image::<colortype::CMYK8>(out.width(), out.height())?;
 
     // 写入元数据
-    if let Some(info) = out_restored.info() {
+    if let Some(info) = out.info() {
         let dpi_w_n = (info.dpi_w * 10000.0) as u32;
         let dpi_h_n = (info.dpi_h * 10000.0) as u32;
         debug!(
@@ -384,7 +312,7 @@ where
         warn!("图像信息缺失，无法写入 TIFF 信息");
     }
 
-    out_tiff_img.write_data(&out_restored.to_bytes())?;
+    out_tiff_img.write_data(&out.to_bytes())?;
 
     Ok(())
 }
@@ -423,8 +351,6 @@ fn is_matching_params(base: &SourceParams, other: &SourceParams) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::BufReader};
-
     use tiff::encoder::{colortype, Rational};
 
     use super::*;
@@ -435,36 +361,30 @@ mod tests {
             .filter_level(log::LevelFilter::Debug)
             .init();
 
-        let mut inputs: Vec<InputImageContext<BufReader<File>>> = vec![];
+        let input_paths = vec![
+            "../../input/01.tif",
+            "../../input/02.tif",
+            "../../input/03.tif",
+            "../../input/04.tif",
+        ];
+        let mut inputs = vec![];
 
-        let file = std::fs::File::open("../../input/01.tif").unwrap();
-        let reader = std::io::BufReader::new(file);
-        inputs.push(InputImageContext::new(
-            reader,
-            ImageOptions {
-                lenticular_width_px: 7,
-            },
-        ));
-
-        let file = std::fs::File::open("../../input/02.tif").unwrap();
-        let reader = std::io::BufReader::new(file);
-        inputs.push(InputImageContext::new(
-            reader,
-            ImageOptions {
-                lenticular_width_px: 7,
-            },
-        ));
+        for input in input_paths {
+            let file = std::fs::File::open(input).unwrap();
+            let reader = std::io::BufReader::new(file);
+            inputs.push(InputImageContext::new(
+                reader,
+                ImageOptions {
+                    lenticular_width_px: 1,
+                },
+            ));
+        }
 
         let opt = ProcessOptions::new(91.60, 10.6);
         let output_info = opt.calc_output_info(&mut inputs).unwrap();
-        // let out = ProcessOptions::new(100.41, 10.6)
-        //     .process_tiff_cmyk8(inputs, &output_info, ScaleAlgorithm::Bilinear)
-        //     .unwrap();
         let out = opt
-            .process_tiff_cmyk8(inputs, &output_info, ScaleAlgorithm::Bilinear)
+            .process_tiff_cmyk8(inputs, &output_info, ScaleAlgorithm::Nearest)
             .unwrap();
-        // 缩放到原始比例
-        let out = restore_resolution_cmyk8(&out).unwrap();
 
         let mut out_writer = std::fs::OpenOptions::new()
             .create(true)

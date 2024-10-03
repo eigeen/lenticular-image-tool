@@ -2,6 +2,7 @@
 /.vscode
 
 /input
+/testing
 .env
 *.png
 *.jpg
