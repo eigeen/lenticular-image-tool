@@ -4,7 +4,7 @@ use log::{debug, warn};
 use ndarray::Axis;
 use tiff::{
     decoder::{ifd::Value as TiffValue, DecodingResult as TiffDecodingResult},
-    encoder::{colortype, Rational},
+    encoder::{colortype, compression::Lzw, Rational},
     tags::Tag as TiffTag,
 };
 
@@ -276,7 +276,9 @@ where
 {
     let mut out_encoder = tiff::encoder::TiffEncoder::new(writer)?;
 
-    let mut out_tiff_img = out_encoder.new_image::<colortype::CMYK8>(out.width(), out.height())?;
+    let mut out_tiff_img = out_encoder
+        .new_image_with_compression::<colortype::CMYK8, _>(out.width(), out.height(), Lzw)
+        .unwrap();
 
     // 写入元数据
     if let Some(info) = out.info() {
@@ -351,7 +353,8 @@ fn is_matching_params(base: &SourceParams, other: &SourceParams) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use tiff::encoder::{colortype, Rational};
+
+    use tiff::encoder::{colortype, compression::Lzw, Rational};
 
     use super::*;
 
@@ -395,7 +398,7 @@ mod tests {
 
         let mut out_encoder = tiff::encoder::TiffEncoder::new(&mut out_writer).unwrap();
         let mut out_tiff_img = out_encoder
-            .new_image::<colortype::CMYK8>(out.width(), out.height())
+            .new_image_with_compression::<colortype::CMYK8, _>(out.width(), out.height(), Lzw)
             .unwrap();
 
         if let Some(info) = out.info() {

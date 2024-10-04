@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "lenticular_core"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "env_logger",
  "fast_image_resize",
@@ -486,19 +486,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "testing"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "env_logger",
- "fast_image_resize",
- "log",
- "ndarray",
- "thiserror",
- "tiff",
 ]
 
 [[package]]
