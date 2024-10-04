@@ -90,14 +90,14 @@ fn create_line_index_mapping_advanced(
     // 光栅线宽度
     let lenticular_width: u32 = lenticular_width_map.iter().sum::<u32>();
     // 光栅线数量
-    let lenticular_count: u32 = (output_width as f64 / lenticular_width as f64).floor() as u32;
+    let lenticular_count: f64 = output_width as f64 / lenticular_width as f64;
     // 当前图之前还有多少光栅线宽度
     let image_offset_px: u32 = lenticular_width_map.iter().take(img_index).sum::<u32>();
     // 当前图片的光栅宽度
     let image_lent_width: u32 = lenticular_width_map[img_index];
 
     // 遍历光栅
-    for group_index in 0..lenticular_count {
+    for group_index in 0..(lenticular_count.ceil() as u32) {
         let pos = group_index * lenticular_width + image_offset_px;
         for i in 0..image_lent_width {
             let pos1 = pos + i;
@@ -138,6 +138,9 @@ mod tests {
         // );
 
         let result = create_line_index_mapping_advanced(16, &[4, 4], 0);
+        eprintln!("result: {:?}", result);
+
+        let result = create_line_index_mapping_advanced(17, &[4, 4], 0);
         eprintln!("result: {:?}", result);
     }
 }

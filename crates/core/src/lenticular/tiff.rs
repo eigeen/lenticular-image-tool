@@ -151,11 +151,11 @@ where
         .map(|c| c.image_options().lenticular_width_px)
         .sum();
     // 光栅线数
-    let lenticular_count = (params.physical_width_in() * params.lpi).floor() as u32;
+    let lenticular_count = params.physical_width_in() * params.lpi;
     // 原图宽高比
     let ratio = params.source_params.width as f64 / params.source_params.height as f64;
     // 输出图像宽度
-    let output_width_px = lenticular_width_px * lenticular_count;
+    let output_width_px = (lenticular_width_px as f64 * lenticular_count).floor() as u32;
     // 输出图像高度
     let output_height_px = (output_width_px as f64 / ratio).floor() as u32;
     // 输出图像DPI
