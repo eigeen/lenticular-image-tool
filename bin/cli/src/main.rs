@@ -25,8 +25,8 @@ struct Cli {
 
     // 调整
     /// 缩放算法
-    #[clap(long)]
-    scale_algorithm: Option<ScaleAlgorithm>,
+    #[clap(long, default_value = "ScaleAlgorithm::default()")]
+    scale_algorithm: ScaleAlgorithm,
 
     // 输出参数
     /// 光栅线宽，单位：光栅数/英寸(LPI)
@@ -35,9 +35,9 @@ struct Cli {
     /// 输出图像宽度，单位：毫米(mm)
     #[clap(long)]
     output_width: f64,
-    // /// 对输出图像进行缩放，使得分辨率与输入图像一致
-    // #[clap(long)]
-    // resize_output: bool,
+    /// （失效）使用 LZW 压缩输出 Tiff 图像。仅当输出文件为 Tiff 格式时有效。
+    #[clap(long, default_value_t = false)]
+    lzw: bool,
     /// 输出文件
     #[clap(short, long)]
     output: String,
@@ -49,8 +49,8 @@ struct Cli {
 
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 enum ScaleAlgorithm {
-    Nearest,
     #[default]
+    Nearest,
     Bilinear,
     Lanczos3,
 }
@@ -105,9 +105,8 @@ fn main() -> anyhow::Result<()> {
     info!("文件重复采用数量：{:?}", counts);
     info!("LPI：{:?}", cli.lpi);
     info!("输出图像宽度：{:?}", cli.output_width);
-    // info!("缩放输出：{:?}", cli.resize_output);
     info!("输出文件：{:?}", cli.output);
-    info!("缩放算法：{:?}", cli.scale_algorithm.unwrap_or_default());
+    info!("缩放算法：{:?}", cli.scale_algorithm);
 
     let inputs: anyhow::Result<Vec<InputImageContext<BufReader<File>>>> = cli
         .input
@@ -132,7 +131,8 @@ fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
 
     let opt = ProcessOptions::new(cli.lpi, cli.output_width)
-        .with_scale_algorithm(cli.scale_algorithm.unwrap_or_default().into());
+        .with_scale_algorithm(cli.scale_algorithm.into())
+        .with_lzw(cli.lzw);
     let output_info = opt.calc_output_info(&mut inputs)?;
 
     debug!(
@@ -140,11 +140,7 @@ fn main() -> anyhow::Result<()> {
         inputs.iter().map(|i| i.image_options()).collect::<Vec<_>>()
     );
 
-    let out = opt.process_tiff_cmyk8(
-        inputs,
-        &output_info,
-        cli.scale_algorithm.unwrap_or_default().into(),
-    )?;
+    let out = opt.process_tiff_cmyk8(inputs, &output_info, cli.scale_algorithm.into())?;
 
     let output_file = OpenOptions::new()
         .create(true)

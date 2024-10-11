@@ -14,6 +14,7 @@ pub struct ProcessOptions {
     pub(crate) lpi: f64,
     pub(crate) physical_width_cm: f64,
     pub(crate) scale_algorithm: Option<ScaleAlgorithm>,
+    pub(crate) lzw: bool,
 }
 
 impl ProcessOptions {
@@ -22,11 +23,17 @@ impl ProcessOptions {
             lpi,
             physical_width_cm,
             scale_algorithm: None,
+            lzw: false,
         }
     }
 
     pub fn with_scale_algorithm(mut self, algorithm: ScaleAlgorithm) -> Self {
         self.scale_algorithm = Some(algorithm);
+        self
+    }
+
+    pub fn with_lzw(mut self, lzw: bool) -> Self {
+        self.lzw = lzw;
         self
     }
 

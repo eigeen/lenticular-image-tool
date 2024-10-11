@@ -151,15 +151,17 @@ where
         .map(|c| c.image_options().lenticular_width_px)
         .sum();
     // 光栅线数
-    let lenticular_count = params.physical_width_in() * params.lpi;
+    let lenticular_count = (params.physical_width_in() * params.lpi).floor() as u32;
     // 原图宽高比
     let ratio = params.source_params.width as f64 / params.source_params.height as f64;
     // 输出图像宽度
-    let output_width_px = (lenticular_width_px as f64 * lenticular_count).floor() as u32;
+    let output_width_px = lenticular_width_px * lenticular_count;
     // 输出图像高度
-    let output_height_px = (output_width_px as f64 / ratio).floor() as u32;
+    let output_height_px = (output_width_px as f64 / ratio).round() as u32;
     // 输出图像DPI
     let dpi = output_width_px as f64 / params.physical_width_in();
+    // let dpi = lenticular_width_px as f64 / (1. / params.lpi);
+    // let dpi = lenticular_width_px as f64 * params.lpi;
 
     Ok(OutputInfo {
         width: output_width_px,
@@ -276,9 +278,7 @@ where
 {
     let mut out_encoder = tiff::encoder::TiffEncoder::new(writer)?;
 
-    let mut out_tiff_img = out_encoder
-        .new_image_with_compression::<colortype::CMYK8, _>(out.width(), out.height(), Lzw)
-        .unwrap();
+    let mut out_tiff_img = out_encoder.new_image::<colortype::CMYK8>(out.width(), out.height())?;
 
     // 写入元数据
     if let Some(info) = out.info() {
